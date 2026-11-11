@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>JSAPI RPC 桥接性能测试</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0; padding: 24px 28px;
+      background: #0f1216; color: #e6edf3;
+      font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    }
+    h1 { font-size: 18px; margin: 0 0 6px; }
+    #status { color: #8b98a5; font-size: 13px; margin-bottom: 14px; }
+    table { border-collapse: collapse; font-size: 13px; }
+    th, td { border: 1px solid #2a333d; padding: 5px 10px; text-align: right; }
+    th { background: #1b232b; color: #8b98a5; font-weight: 600; }
+    td:first-child, th:first-child { text-align: left; }
+    #out { margin-top: 16px; color: #4cc2ff; font-family: Consolas, monospace;
+           font-size: 12px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>JSAPI RPC 桥接性能测试</h1>
+  <div id="status">准备中…</div>
+  <table id="tbl">
+    <thead>
+      <tr><th>指标 (ms)</th><th>n</th><th>min</th><th>p50</th><th>p90</th><th>p95</th><th>p99</th><th>max</th><th>avg</th><th>sd</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+  <div id="out"></div>
+
+  <script>
+  (function () {
+    // 纯桥接开销测量：C++ 侧只记录时间戳，不含任何业务逻辑。
+    const N_SYNC = 400;
+    const N_ASYNC = 300;
+    const N_EVENT = 300;
+    const N_TRACE = 120;
+    const N_WARMUP = 30;
+    // 逐次计时的分辨率受 performance.now() 量化限制（本机为 100µs），
+    // 因此再用批量均值给出精确的平均耗时，用单事件空载往返给出事件延迟。
+    const BATCH_SYNC = 2000;
+    const BATCH_ASYNC = 500;
+    const BATCH_ROUNDS = 10;
+    const N_EVENT_SINGLE = 200;
+
+    function stats(values) {
+      if (!values.length) return null;
+      const v = values.slice().sort((a, b) => a - b);
+      const q = p => v[Math.min(v.length - 1, Math.max(0, Math.round((v.length - 1) * p)))];
+      const avg = v.reduce((s, x) => s + x, 0) / v.length;
+      let sd = 0;
+      for (const x of v) sd += (x - avg) * (x - avg);
+      return {
+        n: v.length, min: v[0], p50: q(0.5), p90: q(0.9), p95: q(0.95),
+        p99: q(0.99), max: v[v.length - 1], avg: avg, sd: Math.sqrt(sd / v.length)
+      };
+    }
+
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const mean = a => a.length ? a.reduce((s, x) => s + x, 0) / a.length : NaN;
+
+    function addRow(tbody, name, s) {
+      if (!s) return;
+      const tr = document.createElement('tr');
+      const cells = [name, s.n, s.min, s.p50, s.p90, s.p95, s.p99, s.max, s.avg, s.sd];
+      for (let i = 0; i < cells.length; i++) {
+        const td = document.createElement('td');
+        td.textContent = typeof cells[i] === 'number' ? cells[i].toFixed(3) : cells[i];
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    }
+
+    async function main() {
+      const status = document.getElementById('status');
+      const out = document.getElementById('out');
+      const tbody = document.querySelector('#tbl tbody');
+      const say = t => { status.textContent = t; };
+
+      if (!window.Extention) {
+        status.textContent = 'window.Extention 不存在：bridge 未注入';
+        return;
+      }
+
+      const demo = Extention.demo;
+      const bench = demo.bench();
+
+      say('预热…');
+      for (let i = 0; i < N_WARMUP; ++i) {
+        bench.ping();
+        await bench.pingAsync();
+      }
+
+      // 时钟对齐：performance.now() 与 QPC(ms) 的偏移。
+      // 用「C++ 进入/返回中点」对「JS 调用前后中点」，多次采样取均值。
+      // performance.now() 量化 100µs，单次中点误差可达 ±50µs，故必须多采样。
+      // 残余系统偏差 = 单次往返的上下行不对称度的一半（无法本地分离）。
+      const offsets = [];
+      for (let i = 0; i < 200; ++i) {
+        const p0 = performance.now();
+        const c = bench.clock();
+        const p1 = performance.now();
+        offsets.push((c.t0 + c.t1) / 2 - (p0 + p1) / 2);
+        if ((i & 7) === 0) await sleep(1);
+      }
+      const offset = mean(offsets);
+
+      // 1) 同步空接口：JS 观测到的完整往返
+      say('同步空接口往返…');
+      const syncTotal = [];
+      for (let i = 0; i < N_SYNC; ++i) {
+        const p0 = performance.now();
+        bench.ping();
+        syncTotal.push(performance.now() - p0);
+      }
+
+      // 2) 同步空接口（trace）：拆成 去程 / C++ 函数体 / 回程
+      const syncTrace = [];
+      const syncForward = [];
+      const syncCpp = [];
+      const syncBack = [];
+      const syncEntry = [];
+      const syncStart = [];
+      for (let i = 0; i < N_TRACE; ++i) {
+        const p0 = performance.now();
+        const r = bench.ping(true);
+        const p1 = performance.now();
+        const total = p1 - p0;
+        const forward = r.t0 - (p0 + offset);
+        const cpp = r.t1 - r.t0;
+        const back = total - forward - cpp;
+        syncTrace.push(total);
+        syncForward.push(forward);
+        syncCpp.push(cpp);
+        syncBack.push(back);
+        syncEntry.push(r.t0);
+        syncStart.push(p0);
+      }
+
+      // 3) 异步空接口：JS 观测「调用 -> Promise resolve」
+      say('异步空接口往返…');
+      const asyncTotal = [];
+      for (let i = 0; i < N_ASYNC; ++i) {
+        const p0 = performance.now();
+        await bench.pingAsync();
+        asyncTotal.push(performance.now() - p0);
+      }
+
+      // 4) 异步空接口（trace）
+      const asyncTrace = [];
+      const asyncForward = [];
+      const asyncCpp = [];
+      const asyncBack = [];
+      const asyncEntry = [];
+      const asyncStart = [];
+      for (let i = 0; i < N_TRACE; ++i) {
+        const p0 = performance.now();
+        const r = await bench.pingAsync(true);
+        const p1 = performance.now();
+        const total = p1 - p0;
+        const forward = r.t0 - (p0 + offset);
+        const cpp = r.t1 - r.t0;
+        const back = total - forward - cpp;
+        asyncTrace.push(total);
+        asyncForward.push(forward);
+        asyncCpp.push(cpp);
+        asyncBack.push(back);
+        asyncEntry.push(r.t0);
+        asyncStart.push(p0);
+      }
+
+      // 5) 批量均值：绕开 performance.now() 量化，得到精确的平均单次耗时
+      say('批量均值…');
+      const syncBatch = [];
+      for (let r = 0; r < BATCH_ROUNDS; ++r) {
+        const p0 = performance.now();
+        for (let i = 0; i < BATCH_SYNC; ++i) bench.ping();
+        syncBatch.push((performance.now() - p0) / BATCH_SYNC);
+      }
+
+      const syncTraceBatch = [];
+      for (let r = 0; r < BATCH_ROUNDS; ++r) {
+        const p0 = performance.now();
+        for (let i = 0; i < BATCH_SYNC; ++i) bench.ping(true);
+        syncTraceBatch.push((performance.now() - p0) / BATCH_SYNC);
+      }
+
+      const asyncBatch = [];
+      for (let r = 0; r < BATCH_ROUNDS; ++r) {
+        const p0 = performance.now();
+        for (let i = 0; i < BATCH_ASYNC; ++i) await bench.pingAsync();
+        asyncBatch.push((performance.now() - p0) / BATCH_ASYNC);
+      }
+
+      const asyncTraceBatch = [];
+      for (let r = 0; r < BATCH_ROUNDS; ++r) {
+        const p0 = performance.now();
+        for (let i = 0; i < BATCH_ASYNC; ++i) await bench.pingAsync(true);
+        asyncTraceBatch.push((performance.now() - p0) / BATCH_ASYNC);
+      }
+
+      // 去程/回程的稳健估计：用「平均进入时刻 - 平均起始时刻 - offset」，
+      // 回程则用「批量均值 - 去程 - C++ 函数体」，避免逐次量化误差累积。
+      const syncForwardAvg = mean(syncEntry) - mean(syncStart) - offset;
+      const asyncForwardAvg = mean(asyncEntry) - mean(asyncStart) - offset;
+      const syncBackAvg = mean(syncTraceBatch) - syncForwardAvg - mean(syncCpp);
+      const asyncBackAvg = mean(asyncTraceBatch) - asyncForwardAvg - mean(asyncCpp);
+
+      // 6) C++ -> JS 事件回调：空载单事件延迟（一次只发一条，避免队列排队）
+      say('事件回调（空载单发）…');
+      const arrivals = [];
+      const single = (name) => { arrivals.push(performance.now()); };
+      bench.addEventListener('bench', single);
+      await sleep(20);
+      const eventSingle = [];
+      for (let i = 0; i < N_EVENT_SINGLE; ++i) {
+        const before = arrivals.length;
+        bench.emit(1, 'bench');
+        const publish = bench.publishes()[0];
+        const deadline = Date.now() + 2000;
+        while (arrivals.length === before && Date.now() < deadline) {
+          await sleep(1);
+        }
+        if (arrivals.length > before) {
+          eventSingle.push((arrivals[before] + offset) - publish);
+        }
+      }
+      bench.removeEventListener('bench', single);
+
+      // 7) C++ -> JS 事件回调：批量连续发布（含浏览器侧任务排队，反映吞吐）
+      say('事件回调（连续发布）…');
+      const recv = new Map();
+      // 事件回调签名固定为 (eventName, ...args)
+      const listener = (name, idx) => { recv.set(idx, performance.now()); };
+      bench.addEventListener('bench', listener);
+      await sleep(20);
+      const emitStart = performance.now();
+      bench.emit(N_EVENT, 'bench');
+      const emitCost = performance.now() - emitStart;
+      const deadline = Date.now() + 5000;
+      while (recv.size < N_EVENT && Date.now() < deadline) {
+        await sleep(5);
+      }
+      bench.removeEventListener('bench', listener);
+      const pubs = bench.publishes();
+
+      const eventOneWay = [];
+      for (let i = 0; i < Math.min(N_EVENT, pubs.length); ++i) {
+        if (!recv.has(i)) continue;
+        // recv 是 JS 时钟，+offset 换算成 QPC 时间轴，与 publish 时刻可比。
+        eventOneWay.push((recv.get(i) + offset) - pubs[i]);
+      }
+
+      const result = {
+        ts: new Date().toISOString(),
+        ua: navigator.userAgent,
+        cores: navigator.hardwareConcurrency,
+        offsetMs: offset,
+        samples: { sync: N_SYNC, async: N_ASYNC, event: N_EVENT, trace: N_TRACE },
+        sync: {
+          total: stats(syncTotal),
+          traceTotal: stats(syncTrace),
+          forward: stats(syncForward),
+          cppSpan: stats(syncCpp),
+          back: stats(syncBack),
+          batchAvg: stats(syncBatch),
+          traceBatchAvg: stats(syncTraceBatch),
+          split: { forward: syncForwardAvg, cpp: mean(syncCpp), back: syncBackAvg }
+        },
+        async: {
+          total: stats(asyncTotal),
+          traceTotal: stats(asyncTrace),
+          forward: stats(asyncForward),
+          cppSpan: stats(asyncCpp),
+          back: stats(asyncBack),
+          batchAvg: stats(asyncBatch),
+          traceBatchAvg: stats(asyncTraceBatch),
+          split: { forward: asyncForwardAvg, cpp: mean(asyncCpp), back: asyncBackAvg }
+        },
+        event: {
+          emitCostMs: emitCost,
+          received: recv.size,
+          published: pubs.length,
+          single: stats(eventSingle),
+          bulk: stats(eventOneWay)
+        }
+      };
+
+      addRow(tbody, 'sync 往返 (JS 观测)', result.sync.total);
+      addRow(tbody, 'sync 往返 (trace 样本)', result.sync.traceTotal);
+      addRow(tbody, 'sync 去程 (JS 调用->C++ 进入)', result.sync.forward);
+      addRow(tbody, 'sync C++ 函数体', result.sync.cppSpan);
+      addRow(tbody, 'sync 回程 (C++ 返回->JS 恢复)', result.sync.back);
+      addRow(tbody, 'sync 批量均值 / 次', result.sync.batchAvg);
+      addRow(tbody, 'sync 批量均值 (trace) / 次', result.sync.traceBatchAvg);
+      addRow(tbody, 'async 往返 (调用->resolve)', result.async.total);
+      addRow(tbody, 'async 往返 (trace 样本)', result.async.traceTotal);
+      addRow(tbody, 'async 去程 (JS 调用->C++ 进入)', result.async.forward);
+      addRow(tbody, 'async C++ 函数体', result.async.cppSpan);
+      addRow(tbody, 'async 回程 (C++ 返回->resolve)', result.async.back);
+      addRow(tbody, 'async 批量均值 / 次', result.async.batchAvg);
+      addRow(tbody, 'async 批量均值 (trace) / 次', result.async.traceBatchAvg);
+      addRow(tbody, 'event 单程 (空载单发)', result.event.single);
+      addRow(tbody, 'event 单程 (连续 300 条)', result.event.bulk);
+
+      say('完成：' + result.event.received + '/' + result.event.published + ' 条事件已回收');
+      out.textContent = JSON.stringify(result, null, 2);
+      bench.report(JSON.stringify(result));
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      main().catch(err => {
+        document.getElementById('status').textContent = '测试失败: ' + err;
+        try {
+          Extention.demo.bench().report(JSON.stringify({
+            error: String(err), stack: (err && err.stack) || ''
+          }));
+        } catch (ignored) {}
+      });
+    });
+  })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,44 @@
+# ---- 构建产物 ----
+build/
+out/
+bin/
+lib/
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+*.exe
+*.exe.manifest
+*.vcxproj*
+*.sln
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CMakeUserPresets.json
+
+# ---- IDE ----
+.vs/
+.vscode/
+.idea/
+*.user
+*.user.*
+*.suo
+*.ncb
+*.sdf
+*.opendb
+
+# ---- 测试/调试临时输出 ----
+self_test_out.txt
+self_test_err.txt
+bench_runs.txt
+
+# ---- 外部依赖（不在仓库内，按需本地准备） ----
+cef_binary/
+qt/
+
+# ---- 系统 ----
+Thumbs.db
+desktop.ini
+.DS_Store
