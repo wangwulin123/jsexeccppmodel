@@ -109,7 +109,22 @@ class JsObjectBase {
   int DispatchEvent(const std::string& event,
                     const RpcEnv& target,
                     const std::vector<JsValue>& args);
+  // 同步事件：按注册顺序取首个匹配 target 的监听者执行，阻塞等回调返回值。
+  // error 为空表示成功；失败时返回 Null，并在 error 里给出可区分的原因：
+  //   "no listener for event 'xxx'" / "sync event timed out ..." /
+  //   "level misaligned, sync nesting rejected" / "event channel overflow" /
+  //   "sync events not supported by this sink" 等。
+  JsValue DispatchEventSync(const std::string& event,
+                            const RpcEnv& target,
+                            const std::vector<JsValue>& args,
+                            int timeout_ms = 10000,
+                            std::string* error = nullptr);
   JsValue GetAllEventInfo() const;
+
+  // 丢弃某个浏览器的失效监听器：keep_frame_id 为空表示全部丢弃（渲染进程
+  // 崩溃后所有回调都已不存在），否则保留该 frame（当前 document）的监听。
+  // 返回被丢弃的数量。页面导航/刷新、渲染进程崩溃后由宿主调用。
+  int DiscardListeners(int browser_id, const std::string& keep_frame_id);
 
  protected:
   // 子类重写：声明本节点的函数/属性表。

@@ -28,6 +28,15 @@ using JsGetter = std::function<JsValue(JsObjectBase* self)>;
 using JsSetter =
     std::function<bool(JsObjectBase* self, const JsValue& value, std::string* error)>;
 
+// JSAPI 成员的执行线程亲和。
+//   Worker（默认）：在所属页面的会话线程（该浏览器的读取线程）执行，可以自由
+//                   阻塞，适合与线程亲和性无关的计算、IO、注册表读写等。
+//   UI：           在宿主 UI 主线程执行，适合操作 Qt 控件等必须 UI 线程的代码。
+enum class ThreadAffinity {
+  Worker,
+  UI,
+};
+
 struct JsMember {
   std::string name;
   bool is_property = false;
@@ -38,6 +47,8 @@ struct JsMember {
   std::vector<Param> params;
   bool async = false;
   bool writable = false;
+  // 该成员体在哪个线程执行；默认 Worker。
+  ThreadAffinity affinity = ThreadAffinity::Worker;
 
   JsFunction function;
   JsGetter getter;
@@ -65,17 +76,20 @@ class JsTableBuilder {
                            JsType return_type,
                            std::vector<Param> params,
                            JsFunction function,
-                           bool async = false);
+                           bool async = false,
+                           ThreadAffinity affinity = ThreadAffinity::Worker);
 
   JsTableBuilder& AsyncFunction(const std::string& name,
                                 JsType return_type,
                                 std::vector<Param> params,
-                                JsFunction function);
+                                JsFunction function,
+                                ThreadAffinity affinity = ThreadAffinity::Worker);
 
   JsTableBuilder& Property(const std::string& name,
                            JsType type,
                            JsGetter getter,
-                           JsSetter setter = nullptr);
+                           JsSetter setter = nullptr,
+                           ThreadAffinity affinity = ThreadAffinity::Worker);
 
   std::shared_ptr<const JsTable> Build();
 

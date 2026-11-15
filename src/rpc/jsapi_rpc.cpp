@@ -1,5 +1,7 @@
 #include "jsapi_rpc/jsapi_rpc.h"
 
+#include <exception>
+
 namespace jsapi {
 
 bool CoerceValue(const JsValue& input,
@@ -169,9 +171,31 @@ std::string RpcHost::EncodeResponse(const RpcResponse& response) {
   return root.ToJson();
 }
 
-RpcResponse RpcHost::Process(const RpcRequest& request) {
+RpcResponse RpcHost::Process(const RpcRequest& request,
+                             const UiExecutor& ui_executor) {
   RpcResponse response;
   response.seq = request.seq;
+
+  // 插件函数体抛出的 C++ 异常不能穿透到宿主：会话线程/UI 线程上的未捕获异常会
+  // 直接 std::terminate 整个进程。这里统一捕获并转成 RPC 错误返回给页面。
+  std::string exception_error;
+  auto run_member = [&](ThreadAffinity affinity,
+                        const std::function<void()>& body) {
+    auto guarded = [&] {
+      try {
+        body();
+      } catch (const std::exception& e) {
+        exception_error = e.what();
+      } catch (...) {
+        exception_error = "unknown exception";
+      }
+    };
+    if (affinity == ThreadAffinity::UI && ui_executor) {
+      ui_executor(guarded);
+    } else {
+      guarded();
+    }
+  };
 
   auto object = registry_ ? registry_->GetObjectByHandle(request.handle) : nullptr;
   if (!object) {
@@ -203,7 +227,13 @@ RpcResponse RpcHost::Process(const RpcRequest& request) {
       response.error = "property '" + member->name + "' has no getter";
       return response;
     }
-    response.value = member->getter(object.get());
+    run_member(member->affinity,
+               [&] { response.value = member->getter(object.get()); });
+    if (!exception_error.empty()) {
+      response.ok = false;
+      response.error =
+          "property '" + member->name + "' getter threw: " + exception_error;
+    }
     return response;
   }
 
@@ -231,7 +261,17 @@ RpcResponse RpcHost::Process(const RpcRequest& request) {
       return response;
     }
     std::string set_error;
-    if (!member->setter(object.get(), value, &set_error)) {
+    bool set_ok = false;
+    run_member(member->affinity, [&] {
+      set_ok = member->setter(object.get(), value, &set_error);
+    });
+    if (!exception_error.empty()) {
+      response.ok = false;
+      response.error =
+          "property '" + member->name + "' setter threw: " + exception_error;
+      return response;
+    }
+    if (!set_ok) {
       response.ok = false;
       response.error = set_error.empty()
                            ? "failed to set property '" + member->name + "'"
@@ -286,7 +326,14 @@ RpcResponse RpcHost::Process(const RpcRequest& request) {
     }
 
     JsCallContext ctx(object.get(), std::move(args), registry_, request.env);
-    member->function(object.get(), ctx);
+    run_member(member->affinity,
+               [&] { member->function(object.get(), ctx); });
+    if (!exception_error.empty()) {
+      response.ok = false;
+      response.error =
+          "function '" + member->name + "' threw: " + exception_error;
+      return response;
+    }
     if (ctx.has_error()) {
       response.ok = false;
       response.error = ctx.error();

@@ -19,6 +19,24 @@ class JsEventSink {
                        int callback_id,
                        const RpcEnv& target,
                        const std::vector<JsValue>& args) = 0;
+
+  // 同步事件（单播）：阻塞到目标页面回调返回、超时或失败。
+  // 返回值语义：
+  //   > 0  成功派发（命中的监听者数量）
+  //   = 0  目标不可达（没有可派发的监听者），不阻塞
+  //   < 0  sink 不支持同步事件，error 里给出原因
+  // 默认实现立即返回 -1，存量 sink 无需改动即可编译通过。
+  virtual int OnEventSync(const std::string& /*event*/,
+                          int /*callback_id*/,
+                          const RpcEnv& /*target*/,
+                          const std::vector<JsValue>& /*args*/,
+                          int /*timeout_ms*/,
+                          JsValue* result,
+                          std::string* error) {
+    if (result) *result = JsValue::Null();
+    if (error) *error = "sync events not supported by this sink";
+    return -1;
+  }
 };
 
 // 句柄注册表 + 命名节点工厂。
@@ -65,6 +83,10 @@ class JsRegistry {
   std::shared_ptr<JsObjectBase> GetNode(const std::string& name,
                                         const RpcEnv& env);
   std::vector<std::string> NodeNames() const;
+
+  // 清理某个浏览器的失效事件监听器（见 JsObjectBase::DiscardListeners）。
+  // keep_frame_id 为空表示清空该浏览器的全部监听（渲染进程已崩溃）。
+  int DiscardListeners(int browser_id, const std::string& keep_frame_id);
 
   // 供 bridge 的 describe 使用。
   JsValue Describe(int handle);

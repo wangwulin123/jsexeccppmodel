@@ -1,5 +1,7 @@
 #include "jsapi/js_object.h"
 
+#include <algorithm>
+
 #include "jsapi/js_registry.h"
 
 namespace jsapi {
@@ -72,8 +74,10 @@ const JsTable& JsObjectBase::EnsureTable() const {
       [](JsObjectBase* self, JsCallContext& ctx) {
         const std::string event = ctx.args()[0].AsString();
         const int callback = ctx.args()[1].AsHandle();
-        self->AddEventListener(event, callback, ctx.env());
-        ctx.Return(JsValue::Bool(true));
+        // 非法 callback（如 {"$cb":-1}）或空事件名必须如实返回 false，
+        // 否则页面无法区分"注册成功"与"静默丢弃"。
+        ctx.Return(JsValue::Bool(
+            self->AddEventListener(event, callback, ctx.env())));
       });
 
   builder.Function(
@@ -158,6 +162,79 @@ int JsObjectBase::DispatchEvent(const std::string& event,
   return EmitTo(event, args, &target, nullptr);
 }
 
+JsValue JsObjectBase::DispatchEventSync(const std::string& event,
+                                        const RpcEnv& target,
+                                        const std::vector<JsValue>& args,
+                                        int timeout_ms,
+                                        std::string* error) {
+  if (error) error->clear();
+
+  JsEventSink* sink = registry_ ? registry_->event_sink() : nullptr;
+  if (!sink) {
+    if (error) *error = "no listener for event '" + event + "'";
+    return JsValue::Null();
+  }
+
+  // 同步事件只支持单播：listeners_ 是注册顺序的 vector，取首个匹配项。
+  Listener target_listener;
+  bool found = false;
+  {
+    std::lock_guard<std::mutex> lock(listener_mutex_);
+    for (const auto& listener : listeners_) {
+      if (listener.event != event) {
+        continue;
+      }
+      if (!EnvMatches(listener.env, target)) {
+        continue;
+      }
+      target_listener = listener;
+      found = true;
+      break;
+    }
+  }
+  if (!found) {
+    if (error) *error = "no listener for event '" + event + "'";
+    return JsValue::Null();
+  }
+
+  JsValue result = JsValue::Null();
+  std::string reason;
+  const int hits = sink->OnEventSync(event, target_listener.callback_id,
+                                     target_listener.env, args, timeout_ms,
+                                     &result, &reason);
+  if (hits < 0) {
+    if (error) *error = reason.empty() ? "sync events not supported by this sink"
+                                       : reason;
+    return JsValue::Null();
+  }
+  if (hits == 0) {
+    if (error) *error = "no listener for event '" + event + "'";
+    return JsValue::Null();
+  }
+  if (!reason.empty()) {
+    if (error) *error = reason;
+    return JsValue::Null();
+  }
+  return result;
+}
+
+int JsObjectBase::DiscardListeners(int browser_id,
+                                   const std::string& keep_frame_id) {
+  std::lock_guard<std::mutex> lock(listener_mutex_);
+  const std::size_t before = listeners_.size();
+  listeners_.erase(
+      std::remove_if(listeners_.begin(), listeners_.end(),
+                     [&](const Listener& listener) {
+                       if (listener.env.browser_id != browser_id) {
+                         return false;
+                       }
+                       return keep_frame_id.empty() ||
+                              listener.env.frame_id != keep_frame_id;
+                     }),
+      listeners_.end());
+  return static_cast<int>(before - listeners_.size());
+}
+
 int JsObjectBase::EmitTo(const std::string& event,
                          const std::vector<JsValue>& args,
                          const RpcEnv* target,
@@ -185,7 +262,11 @@ int JsObjectBase::EmitTo(const std::string& event,
   }
 
   for (const auto& item : targets) {
-    sink->OnEvent(event, item.callback_id, item.env, args);
+    // 单个监听器抛异常不能中断后续投递：事件是广播语义，各监听互不影响。
+    try {
+      sink->OnEvent(event, item.callback_id, item.env, args);
+    } catch (...) {
+    }
   }
   return static_cast<int>(targets.size());
 }

@@ -1,0 +1,1060 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JSAPI Lite 示例</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f1216;
+      --panel: #171c22;
+      --panel-2: #1e252d;
+      --border: #2a333d;
+      --text: #e6edf3;
+      --muted: #8b98a5;
+      --accent: #4cc2ff;
+      --accent-2: #7ee787;
+      --danger: #ff7b72;
+      --code: #0b0e12;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: radial-gradient(circle at 20% 0%, #16222c 0%, var(--bg) 45%);
+      color: var(--text);
+      font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+      min-height: 100vh;
+    }
+
+    header {
+      padding: 26px 32px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: baseline;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+
+    header h1 {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: 0.2px;
+    }
+
+    header .tag {
+      font-size: 12px;
+      color: var(--muted);
+      border: 1px solid var(--border);
+      border-radius: 99px;
+      padding: 3px 10px;
+    }
+
+    main {
+      padding: 20px 32px 32px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+      gap: 16px;
+      max-width: 1500px;
+      margin: 0 auto;
+    }
+
+    .card {
+      background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 18px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .card h2 {
+      margin: 0 0 2px;
+      font-size: 15px;
+      font-weight: 600;
+    }
+
+    .card p.hint {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12.5px;
+      line-height: 1.6;
+    }
+
+    .row { display: flex; flex-wrap: wrap; gap: 8px; }
+
+    button {
+      background: #223040;
+      color: var(--text);
+      border: 1px solid #324458;
+      border-radius: 8px;
+      padding: 7px 12px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }
+
+    button:hover { background: #2b3d50; border-color: var(--accent); }
+    button:active { transform: translateY(1px); }
+    button.danger { border-color: #5a2b2b; background: #3a2222; }
+    button.danger:hover { border-color: var(--danger); }
+
+    .out {
+      min-height: 28px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: var(--code);
+      border: 1px dashed #2b3742;
+      color: var(--accent-2);
+      font-family: Consolas, "Cascadia Mono", monospace;
+      font-size: 12.5px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .kv {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      font-family: Consolas, "Cascadia Mono", monospace;
+      font-size: 12.5px;
+      padding: 4px 2px;
+      border-bottom: 1px dashed #24303a;
+    }
+
+    .kv:last-child { border-bottom: 0; }
+    .kv .k { color: var(--muted); }
+    .kv .v { color: var(--text); text-align: right; }
+
+    #logCard { grid-column: 1 / -1; }
+
+    #log {
+      height: 200px;
+      overflow: auto;
+      background: var(--code);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-family: Consolas, "Cascadia Mono", monospace;
+      font-size: 12.5px;
+      line-height: 1.7;
+    }
+
+    #log div { white-space: pre-wrap; word-break: break-word; }
+    #log .time { color: #5f6f7d; }
+    #log .ok { color: var(--accent-2); }
+    #log .info { color: var(--accent); }
+    #log .err { color: var(--danger); }
+
+    footer {
+      padding: 0 32px 24px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    code {
+      background: #11171d;
+      border: 1px solid #25313c;
+      border-radius: 5px;
+      padding: 1px 5px;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>JSAPI Lite</h1>
+    <span class="tag">CEF + 函数表驱动的精简 JSAPI 执行模型</span>
+    <span class="tag" id="rootVersion">root: -</span>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>根节点 window.Extention</h2>
+      <p class="hint">根节点只负责按名字找到业务插件注册的节点。句柄 0 是固定根节点。</p>
+      <div class="row">
+        <button data-action="root-info">读取版本 / 节点列表</button>
+        <button data-action="list-members">列出 demo 成员</button>
+      </div>
+      <div class="kv"><span class="k">Extention.version()</span><span class="v" id="rootVer">-</span></div>
+      <div class="kv"><span class="k">Extention.nodes()</span><span class="v" id="rootNodes">-</span></div>
+      <div class="out" id="rootOut">等待调用…</div>
+    </section>
+
+    <section class="card">
+      <h2>动态插件节点 demo</h2>
+      <p class="hint">demo_plugin.dll 导出 GetExtensionJsApiObj()，在 C++ 里声明函数表。</p>
+      <div class="row">
+        <button data-action="demo-add">add(2, 3)</button>
+        <button data-action="demo-concat">concat("js", "api")</button>
+        <button data-action="demo-async">await sumAsync(20, 22)</button>
+        <button data-action="demo-fail" class="danger">触发 C++ 错误</button>
+      </div>
+      <div class="kv"><span class="k">demo.version（只读）</span><span class="v" id="demoVersion">-</span></div>
+      <div class="kv"><span class="k">demo.count（读写）</span><span class="v" id="demoCount">-</span></div>
+      <div class="row">
+        <button data-action="demo-count-set">count = 25</button>
+        <button data-action="demo-count-get">读取 count</button>
+      </div>
+      <div class="out" id="demoOut">等待调用…</div>
+    </section>
+
+    <section class="card">
+      <h2>Qt 实现：注册表与文件读取</h2>
+      <p class="hint">
+        插件内部用 Qt 的 QSettings / QFile：注册表固定在 HKEY_CURRENT_USER\Software\jsapi_demo；
+        readFile 返回 Promise，文件内容通过异步回调返回。
+      </p>
+      <div class="row">
+        <button data-action="reg-set">setRegValue("demo_key", "hello")</button>
+        <button data-action="reg-get">getRegValue("demo_key", "fallback")</button>
+        <button data-action="reg-missing">getRegValue("missing_key", "fallback")</button>
+        <button data-action="file-read">await readFile(当前页面)</button>
+      </div>
+      <div class="out" id="qtOut">等待调用…</div>
+    </section>
+
+    <section class="card">
+      <h2>句柄返回：demo.child()</h2>
+      <p class="hint">C++ 返回新的对象句柄，渲染进程再同步 describe 一次并建立独立 V8 代理。</p>
+      <div class="row">
+        <button data-action="demo-child">child().ping("hi")</button>
+        <button data-action="demo-child-label">读取 child().label</button>
+      </div>
+      <div class="out" id="childOut">等待调用…</div>
+    </section>
+
+    <section class="card">
+      <h2>静态注册节点 host</h2>
+      <p class="hint">直接编译进宿主程序的节点，和 DLL 插件共用同一套函数表与执行链路。</p>
+      <div class="row">
+        <button data-action="host-echo">echo("hello")</button>
+        <button data-action="host-mul">mul(6, 7)</button>
+        <button data-action="host-counter">counter 读写</button>
+        <button data-action="host-info">app / pid</button>
+      </div>
+      <div class="out" id="hostOut">等待调用…</div>
+    </section>
+
+    <section class="card">
+      <h2>事件回调</h2>
+      <p class="hint">
+        前端函数在渲染进程登记为回调句柄，浏览器进程保存监听关系；
+        事件到达后按 (browser, frame, callback) 回送到渲染进程执行。
+        dispatchEvent 第三个参数可定向：<code>{ browser, frame, excludeSelf }</code>，
+        缺省时仍是向所有注册页面广播。
+      </p>
+      <div class="row">
+        <button data-action="event-add">注册 hello 监听</button>
+        <button data-action="event-emit">demo.emit("hello", ["world", 42])</button>
+        <button data-action="event-dispatch">demo.dispatchEvent("hello", ["direct"])</button>
+        <button data-action="event-target">定向派发自测</button>
+        <button data-action="event-remove">移除监听</button>
+        <button data-action="event-info">getAllEventInfo()</button>
+      </div>
+      <div class="out" id="eventOut">等待调用…</div>
+    </section>
+
+    <section class="card">
+      <h2>原生界面：Qt GUI 线程执行</h2>
+      <p class="hint">
+        插件函数经 SetMainThreadDispatcher 投递到 Qt GUI 线程，因此可以直接操作主窗口、弹原生对话框。
+        先点「检查执行线程」确认 on_gui_thread = true。
+      </p>
+      <div class="row">
+        <button data-action="ui-thread">检查执行线程</button>
+        <button data-action="ui-title">修改窗口标题</button>
+        <button data-action="ui-status">写状态栏</button>
+        <button data-action="ui-dialog">打开原生弹窗</button>
+      </div>
+      <div class="out" id="uiOut">等待调用…</div>
+    </section>
+
+    <section class="card">
+      <h2>线程亲和：Worker vs UI</h2>
+      <p class="hint">
+        函数体默认在所属页面的会话线程执行（ThreadAffinity::Worker），不在 Qt GUI 线程。
+        Qt 控件只能在 GUI 线程操作：把"改主窗口标题"这样的操作声明成 Worker，执行时就是
+        跨线程操作控件——未定义行为，可能静默不生效、绘制异常甚至崩溃。
+        下面两个成员做同一件事，只有声明 ThreadAffinity::UI 的那个安全生效。
+        最后一个红色按钮会真的在会话线程里操作 Qt 控件（状态栏、窗口标题、原生对话框），
+        <strong>宿主崩溃、界面错乱、后续 JSAPI 全部失效都属于预期结果</strong>，
+        点完后需要重启宿主。
+      </p>
+      <div class="row">
+        <button data-action="affinity-thread">对比执行线程</button>
+        <button data-action="affinity-worker-ui">Worker 声明下操作控件（带防护）</button>
+        <button data-action="affinity-ui-ui">UI 声明下操作控件</button>
+        <button data-action="affinity-auto">运行线程亲和自测</button>
+        <button data-action="affinity-unsafe" class="danger">Worker 声明下真的操作控件（可能崩溃）</button>
+      </div>
+      <div class="out" id="affinityOut">等待调用…</div>
+    </section>
+
+    <section class="card">
+      <h2>临时对象生命周期：demo.child()</h2>
+      <p class="hint">
+        每次 child() 都在浏览器进程新建实例并分配新句柄；渲染进程为该句柄建立独立 V8 代理，
+        代理被 GC 回收时回发 release。objectStats() 可观察句柄表与临时对象的存活情况。
+      </p>
+      <div class="row">
+        <button data-action="tmp-distinct">实例与状态隔离</button>
+        <button data-action="tmp-stress">压力创建 200 个</button>
+        <button data-action="tmp-keep">长持有 + 短生命周期混用</button>
+        <button data-action="tmp-stats">objectStats()</button>
+        <button data-action="tmp-auto">运行完整自测</button>
+      </div>
+      <div class="out" id="tmpOut">等待调用…</div>
+    </section>
+
+    <section class="card">
+      <h2>错误处理与参数校验</h2>
+      <p class="hint">
+        浏览器侧的 error 会还原成 JS 异常：同步调用直接 throw，异步调用 Promise reject。
+        参数个数与类型在浏览器侧统一校验，错误信息带函数名与参数名。
+      </p>
+      <div class="row">
+        <button data-action="err-sync" class="danger">同步 C++ 错误</button>
+        <button data-action="err-async" class="danger">异步失败（文件不存在）</button>
+        <button data-action="err-arg-type" class="danger">参数类型错误</button>
+        <button data-action="err-arg-count" class="danger">参数个数错误</button>
+        <button data-action="err-setter" class="danger">属性校验失败</button>
+      </div>
+      <div class="out" id="errOut">等待调用…</div>
+    </section>
+
+    <section class="card">
+      <h2>同步 RPC 嵌套调用</h2>
+      <p class="hint">
+        C++ 调 <code>host.syncEcho</code> / <code>host.syncNest</code> 会阻塞等待本页回调；
+        回调里再同步调用 JSAPI，就形成 C++ → JS → C++ 的同步嵌套调用栈。
+        每一层都走同一条共享内存通道，靠嵌套队列内联执行，不会自死锁。
+      </p>
+      <div class="row">
+        <button data-action="sync-add-listener">注册同步回调</button>
+        <button data-action="sync-echo-basic">1 层：syncEcho("hello")</button>
+        <button data-action="sync-nest-2">2 层嵌套</button>
+        <button data-action="sync-nest-4">4 层嵌套</button>
+        <button data-action="sync-random">随机 20 次（1~4 层）</button>
+        <button data-action="sync-perf">耗时测试</button>
+        <button data-action="sync-selftest">运行同步嵌套自测</button>
+      </div>
+      <div class="kv"><span class="k">最近一次结果</span><span class="v" id="syncLast">-</span></div>
+      <div class="out" id="syncOut">等待调用…</div>
+    </section>
+
+    <section class="card" id="logCard">
+      <h2>调用日志</h2>
+      <p class="hint">同步调用会阻塞等待浏览器进程回包；<code>sumAsync</code> 走 Promise 异步回包。</p>
+      <div id="log"></div>
+    </section>
+  </main>
+
+  <footer>
+    提示：同步 RPC 使用共享内存 + 命名事件回包；异步 RPC 使用 CEF 进程消息 + Promise。
+  </footer>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let demo = null;
+    let host = null;
+    let helloListener = null;
+    let syncListener = null;
+
+    function log(message, kind = 'info') {
+      const line = document.createElement('div');
+      const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+      line.innerHTML = `<span class="time">[${time}]</span> <span class="${kind}">${escapeHtml(message)}</span>`;
+      $('log').appendChild(line);
+      $('log').scrollTop = $('log').scrollHeight;
+    }
+
+    function escapeHtml(text) {
+      return String(text).replace(/[&<>"']/g, (c) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[c]));
+    }
+
+    function show(id, text) {
+      $(id).textContent = String(text);
+    }
+
+    // syncNest 的预期返回值：第 d 层回调里再调 d-1 层，最内层返回 leaf:<token>。
+    function expectNest(depth, token) {
+      return depth > 1 ? `d${depth}>` + expectNest(depth - 1, token)
+                       : `d1>leaf:${token}`;
+    }
+
+    function ensureSyncListener() {
+      if (syncListener) return;
+      syncListener = function (name, ...args) {
+        if (name === 'sync-echo') {
+          return 'echo:' + args[0];
+        }
+        // sync-nest：回调里再次发起同步 JSAPI 调用，形成多层嵌套。
+        const depth = args[0];
+        const token = args[1];
+        if (depth > 1) {
+          return `d${depth}>` + host.syncNest(depth - 1, token);
+        }
+        return `d1>leaf:${token}`;
+      };
+      host.addEventListener('sync-echo', syncListener);
+      host.addEventListener('sync-nest', syncListener);
+    }
+
+    function showSyncResult(label, value) {
+      show('syncLast', value);
+      show('syncOut', `${label} -> ${value}`);
+      log(`${label} -> ${value}`, 'ok');
+    }
+
+    function handle(action) {
+      try {
+        switch (action) {
+          case 'root-info': {
+            const version = Extention.version();
+            const nodes = Extention.nodes();
+            show('rootVer', version);
+            show('rootNodes', nodes.join(', '));
+            $('rootVersion').textContent = 'root: ' + version;
+            show('rootOut', `version=${version}; nodes=[${nodes.join(', ')}]`);
+            log(`Extention.version() -> ${version}`, 'ok');
+            log(`Extention.nodes() -> [${nodes.join(', ')}]`, 'ok');
+            break;
+          }
+          case 'list-members': {
+            const names = Object.keys(demo);
+            show('rootOut', names.join(', '));
+            log(`Object.keys(demo) -> ${names.join(', ')}`, 'ok');
+            break;
+          }
+          case 'demo-add': {
+            const value = demo.add(2, 3);
+            show('demoOut', `add(2, 3) = ${value}`);
+            log(`demo.add(2, 3) -> ${value}`, 'ok');
+            break;
+          }
+          case 'demo-concat': {
+            const value = demo.concat('js', 'api');
+            show('demoOut', `concat("js", "api") = ${value}`);
+            log(`demo.concat -> ${value}`, 'ok');
+            break;
+          }
+          case 'demo-async': {
+            const start = performance.now();
+            show('demoOut', 'Promise pending…');
+            log('demo.sumAsync(20, 22) 已返回 Promise，等待浏览器进程异步回包…', 'info');
+            demo.sumAsync(20, 22).then((value) => {
+              const cost = (performance.now() - start).toFixed(1);
+              show('demoOut', `sumAsync(20, 22) = ${value} (${cost} ms)`);
+              log(`demo.sumAsync -> ${value} (${cost} ms)`, 'ok');
+            }).catch((error) => {
+              show('demoOut', 'sumAsync rejected: ' + error);
+              log('sumAsync rejected: ' + error, 'err');
+            });
+            break;
+          }
+          case 'demo-fail': {
+            demo.fail();
+            break;
+          }
+          case 'demo-count-set': {
+            demo.count = 25;
+            show('demoCount', demo.count);
+            show('demoOut', 'count = 25');
+            log('demo.count = 25; 再读取 -> ' + demo.count, 'ok');
+            break;
+          }
+          case 'demo-count-get': {
+            show('demoCount', demo.count);
+            show('demoOut', `count = ${demo.count}`);
+            log(`demo.count -> ${demo.count}`, 'ok');
+            break;
+          }
+          case 'reg-set': {
+            const ok = demo.setRegValue('demo_key', 'hello');
+            show('qtOut', `setRegValue -> ${ok}`);
+            log(`demo.setRegValue("demo_key", "hello") -> ${ok}`, 'ok');
+            break;
+          }
+          case 'reg-get': {
+            const value = demo.getRegValue('demo_key', 'fallback');
+            show('qtOut', `getRegValue -> ${value}`);
+            log(`demo.getRegValue("demo_key", "fallback") -> ${value}`, 'ok');
+            break;
+          }
+          case 'reg-missing': {
+            const value = demo.getRegValue('missing_key', 'fallback');
+            show('qtOut', `missing key -> ${value}`);
+            log(`demo.getRegValue("missing_key", "fallback") -> ${value}`, 'ok');
+            break;
+          }
+          case 'file-read': {
+            const path = decodeURIComponent(location.href.replace(/^file:\/\/\//, ''));
+            show('qtOut', 'readFile pending…');
+            log(`demo.readFile("${path}") 返回 Promise，等待异步回调…`, 'info');
+            demo.readFile(path).then((text) => {
+              show('qtOut', `异步回调返回 ${text.length} 字节`);
+              log(`readFile 异步回调完成，内容长度 ${text.length}`, 'ok');
+            }).catch((error) => {
+              show('qtOut', 'readFile rejected: ' + error);
+              log('readFile rejected: ' + error, 'err');
+            });
+            break;
+          }
+          case 'demo-child': {
+            const child = demo.child();
+            const value = child.ping('hi');
+            show('childOut', `child().ping("hi") = ${value}`);
+            log(`demo.child().ping("hi") -> ${value}`, 'ok');
+            break;
+          }
+          case 'demo-child-label': {
+            const child = demo.child();
+            show('childOut', `child().label = ${child.label}`);
+            log(`demo.child().label -> ${child.label}`, 'ok');
+            break;
+          }
+          case 'host-echo': {
+            const value = host.echo('hello');
+            show('hostOut', `echo("hello") = ${value}`);
+            log(`host.echo("hello") -> ${value}`, 'ok');
+            break;
+          }
+          case 'host-mul': {
+            const value = host.mul(6, 7);
+            show('hostOut', `mul(6, 7) = ${value}`);
+            log(`host.mul(6, 7) -> ${value}`, 'ok');
+            break;
+          }
+          case 'host-counter': {
+            host.counter = host.counter + 1;
+            show('hostOut', `counter = ${host.counter}`);
+            log(`host.counter -> ${host.counter}`, 'ok');
+            break;
+          }
+          case 'host-info': {
+            const text = `app=${host.app}; pid=${host.pid}`;
+            show('hostOut', text);
+            log(`host.app=${host.app}, host.pid=${host.pid}`, 'ok');
+            break;
+          }
+          case 'event-add': {
+            if (!helloListener) {
+              helloListener = function (name, ...args) {
+                log(`[事件回调] ${name}(${args.map((v) => JSON.stringify(v)).join(', ')})`, 'ok');
+              };
+              demo.addEventListener('hello', helloListener);
+            }
+            show('eventOut', '已注册 hello 监听');
+            log('demo.addEventListener("hello", fn)', 'info');
+            break;
+          }
+          case 'event-emit': {
+            const count = demo.emit('hello', ['world', 42]);
+            show('eventOut', `emit 派发给 ${count} 个监听者`);
+            log(`demo.emit("hello") -> ${count} listeners`, 'ok');
+            break;
+          }
+          case 'event-dispatch': {
+            const count = demo.dispatchEvent('hello', ['direct']);
+            show('eventOut', `dispatchEvent 派发给 ${count} 个监听者`);
+            log(`demo.dispatchEvent("hello") -> ${count} listeners`, 'ok');
+            break;
+          }
+          case 'event-target': {
+            if (!helloListener) {
+              helloListener = function (name, ...args) {
+                log(`[事件回调] ${name}(${args.map((v) => JSON.stringify(v)).join(', ')})`, 'ok');
+              };
+              demo.addEventListener('hello', helloListener);
+            }
+            const mine = demo.getAllEventInfo().filter((item) => item.event === 'hello');
+            if (!mine.length) {
+              show('eventOut', '当前页没有 hello 监听，无法定向');
+              break;
+            }
+            const browser = mine[0].browser;
+            const frame = mine[0].frame;
+            const sameFrame = mine.filter((item) => item.browser === browser && item.frame === frame).length;
+            const sameBrowser = mine.filter((item) => item.browser === browser).length;
+            const hit = demo.dispatchEvent('hello', ['targeted'], { browser, frame });
+            const miss = demo.dispatchEvent('hello', ['targeted'], { browser: browser + 1000 });
+            const others = demo.dispatchEvent('hello', ['targeted'], { browser, excludeSelf: true });
+            const ok = hit === sameFrame && miss === 0 && others === sameBrowser - sameFrame;
+            const text = `target=${browser}/${frame}: 本页命中 ${hit}/${sameFrame}, ` +
+                         `同浏览器其他 frame ${others}/${sameBrowser - sameFrame}, 未知 browser 命中 ${miss}`;
+            show('eventOut', text);
+            log(`定向派发自测 ${ok ? 'PASS' : 'FAIL'} — ${text}`, ok ? 'ok' : 'err');
+            break;
+          }
+          case 'event-remove': {
+            if (helloListener) {
+              demo.removeEventListener('hello', helloListener);
+              helloListener = null;
+            }
+            show('eventOut', '已移除 hello 监听');
+            log('demo.removeEventListener("hello", fn)', 'info');
+            break;
+          }
+          case 'event-info': {
+            const info = demo.getAllEventInfo();
+            show('eventOut', JSON.stringify(info));
+            log('demo.getAllEventInfo() -> ' + JSON.stringify(info), 'ok');
+            break;
+          }
+          case 'affinity-thread': {
+            const worker = demo.threadInfo();
+            const ui = demo.uiInfo();
+            const text = `Worker 成员：thread=${worker.call_thread}, on_gui_thread=${worker.on_gui_thread} | ` +
+                         `UI 成员：thread=${ui.call_thread}, on_gui_thread=${ui.on_gui_thread}`;
+            show('affinityOut', text);
+            log(`线程对比 -> ${text}`, 'info');
+            break;
+          }
+          case 'affinity-worker-ui': {
+            const r = demo.touchUiAsWorker('Worker 试图改标题 ' + Date.now());
+            show('affinityOut',
+                 `声明=${r.declared_affinity}, on_gui_thread=${r.on_gui_thread}, ` +
+                 `applied=${r.applied}, thread=${r.call_thread} | ${r.note}`);
+            log(`touchUiAsWorker -> applied=${r.applied}; ${r.note}`,
+                r.applied ? 'err' : 'ok');
+            break;
+          }
+          case 'affinity-ui-ui': {
+            const r = demo.touchUiAsUi('UI 亲和改标题 ' + Date.now());
+            show('affinityOut',
+                 `声明=${r.declared_affinity}, on_gui_thread=${r.on_gui_thread}, ` +
+                 `applied=${r.applied}, thread=${r.call_thread}, title=${r.window_title}`);
+            log(`touchUiAsUi -> applied=${r.applied}, title=${r.window_title}`,
+                r.applied && r.on_gui_thread ? 'ok' : 'err');
+            break;
+          }
+          case 'affinity-unsafe': {
+            // 不带任何防护：真的在工作线程里操作 Qt 控件。Qt 会打印跨线程告警，
+            // 宿主进程可能当场崩溃——这就是声明错亲和的实际代价。
+            log('危险演示：即将在会话线程上直接操作 Qt 控件（Worker 亲和），' +
+                '宿主可能崩溃…', 'err');
+            show('affinityOut',
+                 '正在执行：Worker 声明下真实操作 Qt 控件（状态栏 / 窗口标题 / 原生对话框）…');
+            try {
+              demo.unsafeUiAsWorker();
+              // 检查调用后 JSAPI 是否还能用：跨线程操作控件往往把宿主状态弄坏，
+              // 可能崩溃、也可能只是让后续调用全部失败。
+              let probe = null;
+              try {
+                probe = demo.threadInfo();
+              } catch (probeError) {
+                probe = null;
+              }
+              if (probe) {
+                show('affinityOut',
+                     '调用返回了：宿主未崩溃，但窗口/状态栏已被工作线程跨线程操作，' +
+                     '状态不可预期。跨线程操作控件仍属未定义行为。');
+                log('unsafeUiAsWorker 返回：未崩溃，但已发生跨线程控件操作（未定义行为）',
+                    'err');
+              } else {
+                show('affinityOut',
+                     '调用返回了，但后续 JSAPI 调用已经异常：工作线程跨线程操作 Qt 控件' +
+                     '破坏了宿主状态。重启宿主进程才能恢复——这就是声明错亲和的代价。');
+                log('unsafeUiAsWorker 返回后 JSAPI 已失效：跨线程操作控件破坏了宿主',
+                    'err');
+              }
+            } catch (error) {
+              show('affinityOut', '调用失败：' + error);
+              log('unsafeUiAsWorker 调用失败：' + error, 'err');
+            }
+            break;
+          }
+          case 'affinity-auto': {
+            let passed = 0;
+            let failed = 0;
+            const check = (name, condition, detail) => {
+              if (condition) {
+                passed++;
+                log(`PASS ${name}${detail ? ' — ' + detail : ''}`, 'ok');
+              } else {
+                failed++;
+                log(`FAIL ${name}${detail ? ' — ' + detail : ''}`, 'err');
+              }
+            };
+
+            const ui = demo.uiInfo();
+            const worker = demo.threadInfo();
+            check('UI 成员在 Qt GUI 线程', ui.on_gui_thread === true,
+                  `thread=${ui.call_thread}`);
+            check('Worker 成员不在 Qt GUI 线程',
+                  worker.on_gui_thread === false &&
+                  worker.call_thread !== ui.call_thread,
+                  `ui=${ui.call_thread}, worker=${worker.call_thread}`);
+
+            const original = ui.window_title;
+            const wrong = demo.touchUiAsWorker('worker-should-not-apply');
+            check('Worker 声明操作控件被拒绝',
+                  wrong.on_gui_thread === false && wrong.applied === false,
+                  wrong.note);
+
+            const right = demo.touchUiAsUi('affinity-self-test');
+            check('UI 声明操作控件生效',
+                  right.on_gui_thread === true && right.applied === true &&
+                  right.window_title === 'affinity-self-test',
+                  `title=${right.window_title}`);
+
+            demo.setWindowTitle(original);
+
+            const summary = `线程亲和自测：PASS ${passed} / FAIL ${failed}`;
+            show('affinityOut', summary);
+            log(summary, failed === 0 ? 'ok' : 'err');
+            break;
+          }
+          case 'ui-thread': {
+            const info = demo.uiInfo();
+            const text = `on_gui_thread=${info.on_gui_thread}, thread=${info.call_thread}, title=${info.window_title}`;
+            show('uiOut', text);
+            log(`demo.uiInfo() -> ${text}`, info.on_gui_thread ? 'ok' : 'err');
+            break;
+          }
+          case 'ui-title': {
+            const title = 'JSAPI Lite - 标题由 JS 修改于 ' +
+                          new Date().toLocaleTimeString('zh-CN', { hour12: false });
+            const ok = demo.setWindowTitle(title);
+            const info = demo.uiInfo();
+            show('uiOut', `setWindowTitle -> ${ok}; 当前标题 = ${info.window_title}`);
+            log(`demo.setWindowTitle(...) -> ${ok}`, ok ? 'ok' : 'err');
+            break;
+          }
+          case 'ui-status': {
+            const text = '来自 JS 的状态栏消息 ' +
+                         new Date().toLocaleTimeString('zh-CN', { hour12: false });
+            const ok = demo.showStatus(text);
+            show('uiOut', `showStatus -> ${ok}`);
+            log(`demo.showStatus("...") -> ${ok}`, ok ? 'ok' : 'err');
+            break;
+          }
+          case 'ui-dialog': {
+            const ok = demo.openDialog('原生弹窗',
+                                       '这个 QMessageBox 由 JS 调用插件，在主窗口上创建。');
+            show('uiOut', `openDialog -> ${ok}（非模态，可继续操作页面）`);
+            log(`demo.openDialog(...) -> ${ok}`, ok ? 'ok' : 'err');
+            break;
+          }
+          case 'tmp-distinct': {
+            const a = demo.child();
+            const b = demo.child();
+            a.note = 'alpha';
+            const distinctProxy = a !== b;
+            const distinctId = a.id !== b.id && b.id > a.id;
+            const isolated = a.note === 'alpha' && b.note === '';
+            const text = `id: ${a.id}/${b.id}; 代理不同=${distinctProxy}; 实例不同=${distinctId}; ` +
+                         `状态隔离=${isolated}; a.ping=${a.ping('a')}; b.ping=${b.ping('b')}`;
+            show('tmpOut', text);
+            log(text, distinctProxy && distinctId && isolated ? 'ok' : 'err');
+            break;
+          }
+          case 'tmp-stress': {
+            const start = performance.now();
+            const children = [];
+            for (let i = 0; i < 200; i++) children.push(demo.child());
+            let okCount = 0;
+            for (const child of children) {
+              if (child.ping('p') === 'pong: p') okCount++;
+            }
+            const cost = (performance.now() - start).toFixed(1);
+            const text = `创建 200 个临时节点，ping 成功 ${okCount}/200，耗时 ${cost} ms`;
+            show('tmpOut', text);
+            log(text, okCount === 200 ? 'ok' : 'err');
+            break;
+          }
+          case 'tmp-keep': {
+            const kept = demo.child();
+            kept.note = 'kept';
+            for (let i = 0; i < 100; i++) {
+              const temp = demo.child();
+              temp.ping('churn');
+            }
+            const still = kept.ping('still');
+            const text = `长持有代理仍可用: ${still}; note=${kept.note}; ` +
+                         '期间创建并丢弃 100 个临时节点';
+            show('tmpOut', text);
+            log(text, still === 'pong: still' && kept.note === 'kept' ? 'ok' : 'err');
+            break;
+          }
+          case 'tmp-stats': {
+            const stats = Extention.objectStats();
+            const text = `handles=${stats.handles}, transient_live=${stats.transient_live}, ` +
+                         `release_refs=${stats.release_refs}`;
+            show('tmpOut', text);
+            log(`Extention.objectStats() -> ${text}`, 'ok');
+            break;
+          }
+          case 'tmp-auto': {
+            let passed = 0;
+            let failed = 0;
+            const check = (name, condition, detail) => {
+              if (condition) {
+                passed++;
+                log(`PASS ${name}${detail ? ' — ' + detail : ''}`, 'ok');
+              } else {
+                failed++;
+                log(`FAIL ${name}${detail ? ' — ' + detail : ''}`, 'err');
+              }
+            };
+
+            const info = demo.uiInfo();
+            check('插件执行在 Qt GUI 线程', info.on_gui_thread === true,
+                  `thread=${info.call_thread}`);
+
+            const worker = demo.threadInfo();
+            check('Worker 成员不在 Qt GUI 线程',
+                  worker.on_gui_thread === false &&
+                  worker.call_thread !== info.call_thread,
+                  `ui=${info.call_thread}, worker=${worker.call_thread}`);
+
+            const title = 'JSAPI Lite - 自测 ' + Date.now();
+            check('setWindowTitle 返回 true', demo.setWindowTitle(title) === true);
+            check('窗口标题已更新', demo.uiInfo().window_title === title,
+                  demo.uiInfo().window_title);
+            check('showStatus 返回 true', demo.showStatus('自测：状态栏写入') === true);
+            check('openDialog 返回 true',
+                  demo.openDialog('自测弹窗', '由自动化测试创建，可关闭。') === true);
+
+            const base = Extention.objectStats();
+            const a = demo.child();
+            const b = demo.child();
+            check('两次 child() 是不同代理', a !== b);
+            check('两次 child() 是不同实例', a.id !== b.id, `${a.id} vs ${b.id}`);
+            check('实例编号递增', b.id > a.id, `${a.id} -> ${b.id}`);
+            a.note = 'alpha';
+            check('不同实例状态隔离', a.note === 'alpha' && b.note === '',
+                  `a.note=${a.note}, b.note=${b.note}`);
+
+            const held = [];
+            for (let i = 0; i < 10; i++) held.push(demo.child());
+            const after = Extention.objectStats();
+            check('句柄数增长', after.handles >= base.handles + 12,
+                  `${base.handles} -> ${after.handles}`);
+            check('存活临时对象增长', after.transient_live >= 12,
+                  `${base.transient_live} -> ${after.transient_live}`);
+            check('代理引用计数增长', after.release_refs >= 12,
+                  `${base.release_refs} -> ${after.release_refs}`);
+            let allUsable = true;
+            for (const child of held) {
+              if (child.ping('x') !== 'pong: x') allUsable = false;
+            }
+            check('保活的临时节点全部可调用', allUsable);
+
+            const summary = `自测结果：PASS ${passed} / FAIL ${failed}`;
+            show('tmpOut', summary);
+            log(summary, failed === 0 ? 'ok' : 'err');
+            break;
+          }
+          case 'err-sync': {
+            try {
+              demo.fail();
+              show('errOut', '未抛出异常（不符合预期）');
+              log('demo.fail() 未抛出异常', 'err');
+            } catch (error) {
+              show('errOut', '同步异常：' + error);
+              log('demo.fail() -> throw: ' + error, 'ok');
+            }
+            break;
+          }
+          case 'err-async': {
+            show('errOut', 'readFile pending…');
+            log('demo.readFile("Z:\\jsapi\\not-exists.txt") 返回 Promise…', 'info');
+            demo.readFile('Z:\\jsapi\\not-exists.txt').then((text) => {
+              show('errOut', '意外成功：' + text.length + ' 字节');
+              log('readFile 意外成功', 'err');
+            }).catch((error) => {
+              show('errOut', 'Promise reject：' + error);
+              log('readFile -> reject: ' + error, 'ok');
+            });
+            break;
+          }
+          case 'err-arg-type': {
+            try {
+              demo.add('not-a-number', 2);
+              show('errOut', '未抛出异常（不符合预期）');
+              log('demo.add("not-a-number", 2) 未抛出异常', 'err');
+            } catch (error) {
+              show('errOut', '参数类型异常：' + error);
+              log('demo.add 类型校验 -> ' + error, 'ok');
+            }
+            break;
+          }
+          case 'err-arg-count': {
+            try {
+              demo.add(1);
+              show('errOut', '未抛出异常（不符合预期）');
+              log('demo.add(1) 未抛出异常', 'err');
+            } catch (error) {
+              show('errOut', '参数个数异常：' + error);
+              log('demo.add 个数校验 -> ' + error, 'ok');
+            }
+            break;
+          }
+          case 'err-setter': {
+            try {
+              demo.count = -1;
+              show('errOut', '未抛出异常（不符合预期）');
+              log('demo.count = -1 未抛出异常', 'err');
+            } catch (error) {
+              show('errOut', '属性校验异常：' + error);
+              log('demo.count = -1 -> throw: ' + error, 'ok');
+            }
+            break;
+          }
+          case 'sync-add-listener': {
+            ensureSyncListener();
+            show('syncOut', '已注册 sync-echo / sync-nest 同步回调');
+            log('host.addEventListener("sync-echo" / "sync-nest", fn)', 'info');
+            break;
+          }
+          case 'sync-echo-basic': {
+            ensureSyncListener();
+            showSyncResult('syncEcho("hello")', host.syncEcho('hello'));
+            break;
+          }
+          case 'sync-nest-2': {
+            ensureSyncListener();
+            showSyncResult('syncNest(2, "T2")', host.syncNest(2, 'T2'));
+            break;
+          }
+          case 'sync-nest-4': {
+            ensureSyncListener();
+            showSyncResult('syncNest(4, "T4")', host.syncNest(4, 'T4'));
+            break;
+          }
+          case 'sync-random': {
+            ensureSyncListener();
+            let pass = 0;
+            let fail = 0;
+            const details = [];
+            const start = performance.now();
+            for (let i = 0; i < 20; i++) {
+              const depth = 1 + Math.floor(Math.random() * 4);
+              const token = 't' + Math.random().toString(36).slice(2, 10);
+              const value = host.syncNest(depth, token);
+              const expected = expectNest(depth, token);
+              if (value === expected) {
+                pass++;
+              } else {
+                fail++;
+                details.push(`d${depth} ${value} != ${expected}`);
+              }
+            }
+            const cost = (performance.now() - start).toFixed(1);
+            const text = `随机嵌套 20 次（1~4 层）：PASS ${pass} / FAIL ${fail}，耗时 ${cost} ms` +
+                         (details.length ? '；' + details.join('; ') : '');
+            show('syncOut', text);
+            show('syncLast', `${pass}/${pass + fail}`);
+            log(text, fail === 0 ? 'ok' : 'err');
+            break;
+          }
+          case 'sync-perf': {
+            ensureSyncListener();
+            const flatRounds = 300;
+            let t0 = performance.now();
+            for (let i = 0; i < flatRounds; i++) host.syncEcho('p' + i);
+            const flatAvg = (performance.now() - t0) / flatRounds;
+
+            const nestRounds = 100;
+            t0 = performance.now();
+            for (let i = 0; i < nestRounds; i++) host.syncNest(4, 'p' + i);
+            const nestAvg = (performance.now() - t0) / nestRounds;
+
+            const text = `syncEcho x${flatRounds}: ${flatAvg.toFixed(3)} ms/次；` +
+                         `4 层嵌套 x${nestRounds}: ${nestAvg.toFixed(3)} ms/次`;
+            show('syncOut', text);
+            show('syncLast', `${flatAvg.toFixed(3)} / ${nestAvg.toFixed(3)} ms`);
+            log(text, 'ok');
+            break;
+          }
+          case 'sync-selftest': {
+            ensureSyncListener();
+            let passed = 0;
+            let failed = 0;
+            const check = (name, condition, detail) => {
+              if (condition) {
+                passed++;
+                log(`PASS ${name}${detail ? ' — ' + detail : ''}`, 'ok');
+              } else {
+                failed++;
+                log(`FAIL ${name}${detail ? ' — ' + detail : ''}`, 'err');
+              }
+            };
+
+            check('1 层同步往返', host.syncEcho('abc') === 'echo:abc',
+                  host.syncEcho('abc'));
+            for (let depth = 1; depth <= 4; depth++) {
+              const token = 'st' + depth;
+              const value = host.syncNest(depth, token);
+              check(`${depth} 层同步嵌套`, value === expectNest(depth, token),
+                    value);
+            }
+            const a = host.syncNest(3, 'A');
+            const b = host.syncNest(2, 'B');
+            check('连续不同 token 不串台',
+                  a === expectNest(3, 'A') && b === expectNest(2, 'B'),
+                  `${a} | ${b}`);
+            check('嵌套后普通同步调用正常',
+                  host.mul(6, 7) === 42 && host.echo('x') === 'x');
+            check('嵌套后临时对象可调用',
+                  demo.child().ping('z') === 'pong: z');
+
+            const summary = `同步嵌套自测：PASS ${passed} / FAIL ${failed}`;
+            show('syncOut', summary);
+            show('syncLast', `${passed}/${passed + failed}`);
+            log(summary, failed === 0 ? 'ok' : 'err');
+            break;
+          }
+          default:
+            break;
+        }
+      } catch (error) {
+        show('demoOut', '调用失败：' + error);
+        log('调用失败：' + error, 'err');
+      }
+    }
+
+    document.querySelectorAll('button[data-action]').forEach((button) => {
+      button.addEventListener('click', () => handle(button.dataset.action));
+    });
+
+    document.addEventListener('DOMContentLoaded', () => {
+      log('页面加载完成，开始探测 window.Extention…', 'info');
+      if (!window.Extention) {
+        log('window.Extention 不存在：jsapi_bridge 未注入或根节点 describe 失败。', 'err');
+        return;
+      }
+
+      try {
+        const version = Extention.version();
+        $('rootVersion').textContent = 'root: ' + version;
+        show('rootVer', version);
+        log(`Extention.version() -> ${version}`, 'ok');
+      } catch (error) {
+        log('读取根节点版本失败：' + error, 'err');
+      }
+
+      try {
+        demo = Extention.demo;
+        host = Extention.host;
+        const members = Object.keys(demo);
+        log(`Extention.demo 就绪；成员: ${members.join(', ')}`, 'ok');
+        log('Extention.host 就绪', 'ok');
+        show('rootNodes', Extention.nodes().join(', '));
+        show('demoVersion', demo.version);
+        show('demoCount', demo.count);
+      } catch (error) {
+        log('获取命名节点失败：' + error, 'err');
+      }
+    });
+  </script>
+</body>
+</html>

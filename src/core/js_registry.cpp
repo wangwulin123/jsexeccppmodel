@@ -219,6 +219,24 @@ std::vector<std::string> JsRegistry::NodeNames() const {
   return node_order_;
 }
 
+int JsRegistry::DiscardListeners(int browser_id,
+                                 const std::string& keep_frame_id) {
+  // 先拷贝对象列表再释放注册表锁：监听器锁在对象内部，锁序固定为
+  // 注册表 -> 监听器，避免与派发路径（只持监听器锁）互相等待。
+  std::vector<std::shared_ptr<JsObjectBase>> objects;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    objects = objects_;
+  }
+  int removed = 0;
+  for (const auto& object : objects) {
+    if (object) {
+      removed += object->DiscardListeners(browser_id, keep_frame_id);
+    }
+  }
+  return removed;
+}
+
 JsValue JsRegistry::Describe(int handle) {
   auto object = GetObjectByHandle(handle);
   if (!object) {

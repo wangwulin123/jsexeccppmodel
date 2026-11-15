@@ -35,12 +35,14 @@ JsTableBuilder& JsTableBuilder::Function(const std::string& name,
                                          JsType return_type,
                                          std::vector<Param> params,
                                          JsFunction function,
-                                         bool async) {
+                                         bool async,
+                                         ThreadAffinity affinity) {
   JsMember& member = AddMember(name);
   member.is_property = false;
   member.type = return_type;
   member.params = std::move(params);
   member.async = async;
+  member.affinity = affinity;
   member.function = std::move(function);
   member.getter = nullptr;
   member.setter = nullptr;
@@ -51,20 +53,23 @@ JsTableBuilder& JsTableBuilder::Function(const std::string& name,
 JsTableBuilder& JsTableBuilder::AsyncFunction(const std::string& name,
                                               JsType return_type,
                                               std::vector<Param> params,
-                                              JsFunction function) {
+                                              JsFunction function,
+                                              ThreadAffinity affinity) {
   return Function(name, return_type, std::move(params), std::move(function),
-                  /*async=*/true);
+                  /*async=*/true, affinity);
 }
 
 JsTableBuilder& JsTableBuilder::Property(const std::string& name,
                                          JsType type,
                                          JsGetter getter,
-                                         JsSetter setter) {
+                                         JsSetter setter,
+                                         ThreadAffinity affinity) {
   JsMember& member = AddMember(name);
   member.is_property = true;
   member.type = type;
   member.params.clear();
   member.async = false;
+  member.affinity = affinity;
   member.function = nullptr;
   member.getter = std::move(getter);
   member.setter = std::move(setter);

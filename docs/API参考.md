@@ -2,18 +2,23 @@
 
 头文件位于 `include/`：
 
-| 头文件 | 内容 |
-| --- | --- |
-| `jsapi/js_value.h` | `JsType`、`JsValue`、`ParseJson` |
-| `jsapi/js_table.h` | `Param`、`JsMember`、`JsTable`、`JsTableBuilder` |
-| `jsapi/js_object.h` | `RpcEnv`、`JsCallContext`、`LifeType`、`JsObjectBase`、`JSAPI_NODE_LIFE_TYPE` |
-| `jsapi/js_registry.h` | `JsEventSink`、`JsRegistry`、`plugins::LoadDll`、`JSAPI_EXPORT_EXTENSION` |
-| `jsapi_rpc/jsapi_rpc.h` | `RpcRequest`、`RpcResponse`、`RpcHost`、`CoerceValue` |
-| `jsapi_bridge/jsapi_browser_bridge.h` | `JsApiBrowserBridge` |
-| `jsapi_bridge/jsapi_render_handler.h` | `JsApiRenderHandler` |
-| `jsapi_bridge/jsapi_protocol.h` | 进程消息名、共享内存名称与布局常量 |
+| 头文件 | 内容 | 使用方 |
+| --- | --- | --- |
+| `jsapi/js_value.h` | `JsType`、`JsValue`、`ParseJson` | 业务 / 插件 |
+| `jsapi/js_table.h` | `Param`、`JsMember`、`JsTable`、`JsTableBuilder` | 业务 / 插件 |
+| `jsapi/js_object.h` | `RpcEnv`、`JsCallContext`、`LifeType`、`JsObjectBase`、`JSAPI_NODE_LIFE_TYPE` | 业务 / 插件 |
+| `jsapi/js_registry.h` | `JsEventSink`、`JsRegistry`、`plugins::LoadDll`、`JSAPI_EXPORT_EXTENSION` | 业务 / 插件 |
+| `jsapi/jsapi_version.h` | `JSAPI_ABI_VERSION` | 业务 / 插件 |
+| `jsapi_rpc/jsapi_rpc.h` | `RpcRequest`、`RpcResponse`、`RpcHost`、`CoerceValue` | 适配层 / 高级 |
+| `jsapi_channel/jsapi_channel.h` | 通道名推导、共享内存布局、读写端 | 高级 / 自测 |
+| `jsapi_channel/jsapi_sync_channel.h` | `SyncChannel`（渲染侧同步调用） | 高级 / 自测 |
+| `jsapi_cef/runtime.h` | `jsapi::cef::Runtime`、`BrowserHandle`、`BrowserObserver`（**不含 CEF 类型**） | 非 Qt 宿主 |
+| `jsapi_qt/runtime.h` | `jsapi::qt::Runtime`（CEF 初始化 + Qt 线程投递器） | Qt 宿主 |
+| `jsapi_qt/web_container.h` | `jsapi::qt::WebContainer`（QWidget 容器） | Qt 宿主 |
 
-除 bridge 层外均在 `namespace jsapi`，bridge 层在 `namespace jsapi_bridge`。
+命名空间：执行模型层在 `namespace jsapi`；适配层公共接口在 `namespace jsapi::cef`；容器层在 `namespace jsapi::qt`。`src/cef/` 下的内部实现沿用历史命名 `namespace jsapi_bridge`，属于私有头，不对外安装。
+
+CEF 内部头（`jsapi_browser_bridge.h`、`jsapi_render_handler.h`、`jsapi_render_core.h`、`jsapi_render_types.h`、`jsapi_sync_channel.cpp` 等）只存在于 `src/cef/`，业务层不可见。分层规范见 [接入指南 · 分层与设计约定](接入指南.md#1-分层与设计约定)。
 
 ---
 
@@ -90,21 +95,26 @@ struct Param {
 ### JsTableBuilder
 
 ```cpp
+enum class ThreadAffinity { Worker, UI };
+
 JsTableBuilder& Function(const std::string& name,
                          JsType return_type,
                          std::vector<Param> params,
                          JsFunction function,
-                         bool async = false);
+                         bool async = false,
+                         ThreadAffinity affinity = ThreadAffinity::Worker);
 
 JsTableBuilder& AsyncFunction(const std::string& name,
                               JsType return_type,
                               std::vector<Param> params,
-                              JsFunction function);
+                              JsFunction function,
+                              ThreadAffinity affinity = ThreadAffinity::Worker);
 
 JsTableBuilder& Property(const std::string& name,
                          JsType type,
                          JsGetter getter,
-                         JsSetter setter = nullptr);
+                         JsSetter setter = nullptr,
+                         ThreadAffinity affinity = ThreadAffinity::Worker);
 ```
 
 ```cpp
@@ -120,6 +130,10 @@ using JsSetter   = std::function<bool(JsObjectBase* self,
 - 成员**声明顺序即索引**，`JsTable` 内 `FindByIndex` 用它分发；已下发给渲染进程的索引不能漂移。
 - 属性不带 setter 即只读，渲染进程侧也标记为不可写。
 - 属性在渲染进程是 accessor：读取/赋值都会产生一次同步 RPC，注意不要在循环里频繁读写大量属性。
+- `affinity` 决定函数体在哪条线程执行：
+  - `Worker`（默认）：该页面的会话线程。可自由阻塞，适合计算、IO、注册表等与线程亲和无关的操作；
+  - `UI`：宿主 UI 主线程（经 `SetMainThreadDispatcher` 阻塞切换），适合操作 Qt 控件等必须 UI 线程的代码。
+  - 声明为 `UI` 时函数体应尽量短：它占用宿主 UI 线程，长耗时操作会拖慢所有页面。
 
 ### JsTable
 
@@ -129,7 +143,7 @@ const JsMember* FindByIndex(int index) const;
 const std::vector<JsMember>& members() const;
 ```
 
-`JsMember` 包含 `name / is_property / index / type / params / async / writable` 以及对应回调。
+`JsMember` 包含 `name / is_property / index / type / params / async / writable / affinity` 以及对应回调。
 
 ---
 
@@ -156,7 +170,11 @@ class JsObjectBase {
   int  BroadcastEvent(const std::string& event, const std::vector<JsValue>& args);
   int  DispatchEvent(const std::string& event, const RpcEnv& target,
                      const std::vector<JsValue>& args);
+  JsValue DispatchEventSync(const std::string& event, const RpcEnv& target,
+                            const std::vector<JsValue>& args,
+                            int timeout_ms = 10000, std::string* error = nullptr);
   JsValue GetAllEventInfo() const;
+  int DiscardListeners(int browser_id, const std::string& keep_frame_id);
 
  protected:
   virtual void DeclareMembers(JsTableBuilder& table) const {}
@@ -166,6 +184,8 @@ class JsObjectBase {
 - 函数表懒构建并缓存（`table_mutex_` 保护）。`InvalidateTable()` 丢弃缓存，下次 `GetTable()` 重新声明；注册新命名节点时 `JsRegistry` 会自动调用。
 - `handle()` / `registry()` / `env()` 只在被注册表接管后有效；`env()` 是**创建时**的环境。
 - 事件监听表由 `listener_mutex_` 保护，`BroadcastEvent` / `DispatchEvent` 返回命中的监听者数量。
+- `DispatchEventSync` 只支持单播：取首个 `event` 与 `target` 都匹配的监听者，阻塞等待其返回值；`timeout_ms <= 0` 时使用默认 10 s。失败通过 `error` 返回（`no listener for event 'x'`、`sync event timed out`、`render process terminated`）。
+- `DiscardListeners(browser_id, keep_frame_id)` 清理失效监听器：`keep_frame_id` 非空时只保留该 frame（当前 document），为空则清空该浏览器的全部监听（渲染进程崩溃）。框架在「新 document 建根对象」与「渲染进程终止」时自动调用，插件通常不需要手动调用。
 
 ### JSAPI_NODE_LIFE_TYPE
 
@@ -312,7 +332,7 @@ static std::string EncodeResponse(const RpcResponse&);
 RpcResponse Process(const RpcRequest&);
 ```
 
-`RpcHost` 不依赖 CEF，可脱离宿主单测（`tests/self_test.cpp` 即如此）。
+`RpcHost` 不依赖 CEF，可脱离宿主单测（`test/reliability/` 即如此）。
 
 处理顺序：
 
@@ -330,12 +350,13 @@ RpcResponse Process(const RpcRequest&);
 | JS 返回值 | 直接返回结果 | 原生 `Promise` |
 | 传输 | 共享内存 + 命名事件 | `CefProcessMessage` |
 | 渲染进程 | 阻塞等待 | 不阻塞，挂起在 `pending_[seq]` |
-| 超时 | 10 s（`WaitForSingleObject`） | **无超时**，浏览器不回包则 Promise 永久 pending |
+| 超时 | 默认 10 s，可按调用传 `timeout_ms`；超时**不取消**已开始的执行，迟到回包按 `seq` 丢弃 | **无超时**，浏览器不回包则 Promise 永久 pending |
 | 失败 | `throw` 异常 | `Promise.reject` |
-| 浏览器侧执行 | 同步执行完再回包 | 同样同步执行完再回包（异步只影响渲染侧） |
+| 浏览器侧执行 | 该页面的会话线程，按成员线程亲和执行（默认 Worker；`ThreadAffinity::UI` 投递宿主 UI 线程），执行完再回包 | 宿主 UI 线程（`ThreadAffinity::UI` 原地执行），执行完再回包（异步只影响渲染侧） |
 
 - 同步调用在**主线程**发起，会阻塞该 frame 的 JS 执行；不要在 UI 交互路径调用耗时接口。
-- 异步调用的插件函数仍然在浏览器侧串行执行，不要指望它带来并行。
+- 同步调用按页面会话线程并行：A 页的耗时调用不会挡住 B 页；同一页面内仍是串行。
+- 异步调用的插件函数仍在宿主 UI 线程串行执行，不要指望它带来并行。
 - 单条请求/回包上限 **1 MB**（`kRequestCapacity` / `kReplyCapacity`），超限返回错误。
 
 ---
@@ -378,19 +399,21 @@ function 'add' arg 'a': expected int, got string
 | 移除 | `RemoveEventListener(event, cb)` | `removeEventListener(event, fn)` |
 | 广播 | `BroadcastEvent(event, args)` | `dispatchEvent(event, args)` |
 | 定向 | `DispatchEvent(event, target, args)` | `dispatchEvent(event, args, {browser, frame})` |
+| 同步等待 | `DispatchEventSync(event, target, args, timeout_ms)` | 由插件函数内部调用，JS 侧无直接入口 |
 | 排除自己 | — | `dispatchEvent(event, args, {excludeSelf: true})` |
 | 查询 | `GetAllEventInfo()` | `getAllEventInfo()` |
+| 失效清理 | `DiscardListeners(browser, keep_frame)` | 框架自动调用，页面无需处理 |
 
 匹配规则（`EmitTo`）：
 
 - `target.browser_id >= 0` 时只匹配同 browser 的监听；
-- `target.frame_id` 非空时只匹配同 frame 的监听；
+- `target.frame_id` 非空时只匹配同 frame 的监听（frame id 取自当前 document，导航/刷新后会变）；
 - `target` 为空（`BroadcastEvent`）时不筛选；
 - `exclude` 命中的监听者跳过（按 `browser + frame` 全等比较）。
 
 JS 回调签名固定为 `(eventName, ...args)`，`args` 由 `JsValue` 转 V8。
 
-事件回调在渲染进程主线程执行；回调中再调用同步 RPC 是允许的（会再次阻塞主线程）。
+事件回调在渲染进程主线程执行；回调中再调用同步 RPC 是允许的（会再次阻塞主线程），同步嵌套上限 8 层。回调抛异常会被捕获并转成错误结果，不会穿透到 C++。
 
 ---
 
@@ -416,7 +439,9 @@ JS 回调签名固定为 `(eventName, ...args)`，`args` 由 `JsValue` 转 V8。
 | `JsRegistry` | `mutex_` | 句柄表、节点表、引用计数 |
 | `JsObjectBase` 函数表 | `table_mutex_` | 懒构建缓存 |
 | `JsObjectBase` 监听表 | `listener_mutex_` | 增删与派发快照 |
-| 插件函数执行 | `process_mutex_` | 同步/异步请求串行执行 |
-| 回包通道缓存 | `reply_mutex_` | 工作线程与关闭回调并发 |
+| 插件函数执行 | 每页面一条会话线程 | 同页串行、跨页并行（无全局锁） |
+| 回包通道缓存 | `reply_mutex_` | 读取线程与会话线程并发 |
 
-事件派发与临时对象释放都会投递到宿主 UI 线程（`SetMainThreadDispatcher`），与插件函数的执行点一致。
+插件函数没有全局执行锁：同一页面内由会话线程串行，跨页面的同一节点实例可能并发调用。**跨页面共享状态的节点必须自行加锁**；也可以把该成员声明为 `ThreadAffinity::UI`，让它在宿主 UI 线程与其他 UI 成员串行执行。
+
+临时对象释放投递到宿主 UI 线程（`SetMainThreadDispatcher`）；`ThreadAffinity::UI` 的成员同样在该线程执行。

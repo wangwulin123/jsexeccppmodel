@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -47,7 +48,13 @@ class RpcHost {
 
   static std::string EncodeResponse(const RpcResponse& response);
 
-  RpcResponse Process(const RpcRequest& request);
+  // UI 亲和成员的执行器：把函数体搬到宿主 UI 主线程执行并同步等待返回。
+  // 实现方不应在闭包里再加锁——调用线程已经持有所需上下文，闭包只跑函数体。
+  using UiExecutor = std::function<void(const std::function<void()>&)>;
+
+  // ui_executor 为空时所有成员都在当前线程执行（单测/无 UI 宿主场景）。
+  RpcResponse Process(const RpcRequest& request,
+                      const UiExecutor& ui_executor = nullptr);
 
  private:
   JsRegistry* registry_ = nullptr;
