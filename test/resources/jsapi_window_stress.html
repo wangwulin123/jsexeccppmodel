@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>JSAPI 多页压力测试页</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #111; color: #ccc;
+               font: 12px/1.5 Consolas, monospace; }
+  #status { padding: 6px 8px; word-break: break-all; }
+</style>
+</head>
+<body>
+<div id="status">loading…</div>
+<script>
+// 多 web 页压力测试页：等扩展就绪后跑固定次数的同步 RPC，结果用
+// Extention.test.report(...) 回传宿主（同进程内的测试节点，不走 stderr）。
+(() => {
+  const query = new URLSearchParams(location.search);
+  const page = Number(query.get('page') || '0');
+  const calls = Math.max(1, Number(query.get('calls') || '100'));
+
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+  async function waitReady(timeoutMs) {
+    const deadline = performance.now() + timeoutMs;
+    while (performance.now() < deadline) {
+      if (window.Extention && Extention.host &&
+          typeof Extention.host.mul === 'function' && Extention.test &&
+          typeof Extention.test.report === 'function') {
+        return true;
+      }
+      await sleep(20);
+    }
+    return false;
+  }
+
+  function report(payload) {
+    document.getElementById('status').textContent = JSON.stringify(payload);
+    try {
+      Extention.test.report(page, !!payload.ok, payload.calls | 0,
+                            payload.success | 0, payload.ms | 0);
+    } catch (ignored) {
+      // 扩展还没就绪时没有回传通道，宿主按超时处理。
+    }
+  }
+
+  async function run() {
+    const startAll = performance.now();
+    if (!(await waitReady(60000))) {
+      report({ page, ok: false, calls, success: 0,
+               ms: performance.now() - startAll, error: 'Extention unavailable' });
+      return;
+    }
+
+    let success = 0;
+    let error = '';
+    const startedAt = performance.now();
+    try {
+      Extention.host.mul(0, 1);  // 预热，排除首次调用的 describe 抖动
+      for (let i = 0; i < calls; ++i) {
+        if (Extention.host.mul(i, 1) === i) {
+          ++success;
+        }
+      }
+    } catch (e) {
+      error = String(e);
+    }
+    const ms = performance.now() - startedAt;
+    report({ page, ok: success === calls && !error, calls, success, ms, error });
+  }
+
+  window.addEventListener('DOMContentLoaded', () => { run(); });
+})();
+</script>
+</body>
+</html>

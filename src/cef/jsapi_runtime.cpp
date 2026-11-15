@@ -117,7 +117,14 @@ class RuntimeImpl final : public BrowserHost {
 
   std::shared_ptr<BrowserHandleImpl> CreateBrowserImpl(
       const BrowserOptions& options) {
-    auto handle = std::make_shared<BrowserHandleImpl>(this, bridge_, options);
+    // 引用计数由 CEF 的 IMPLEMENT_REFCOUNTING 统一管理，std::shared_ptr 只是
+    // 其中一个引用：删除器走 Release。不能用 make_shared —— 那样 CEF 计数归零
+    // 时的 delete this 会和控制块的释放撞在一起，进程退出时报
+    // STATUS_HEAP_CORRUPTION（多浏览器时必现）。
+    auto* raw = new BrowserHandleImpl(this, bridge_, options);
+    raw->AddRef();
+    std::shared_ptr<BrowserHandleImpl> handle(
+        raw, [](BrowserHandleImpl* self) { self->Release(); });
     {
       std::lock_guard<std::mutex> lock(browsers_mutex_);
       browsers_.push_back(handle);

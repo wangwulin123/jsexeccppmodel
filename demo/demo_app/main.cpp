@@ -36,7 +36,7 @@ StartupArgs ParseStartupArgs(int argc, char* argv[]) {
       bool ok = false;
       const int pages = arg.mid(8).toInt(&ok);
       if (ok) {
-        args.pages = qBound(1, pages, 16);
+        args.pages = pages;
       }
     }
   }

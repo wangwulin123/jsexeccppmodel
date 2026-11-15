@@ -241,6 +241,9 @@ if(EXISTS "${CEF_ROOT}/include/cef_app.h")
     jsapi_setup_target(jsapi_qt)
 
     add_subdirectory(demo/demo_app)
+
+    # 多 web 页压力测试（窗口化）：需要真实 CEF + Qt 窗口，与被测代码同目录部署。
+    add_subdirectory(test/window)
   else()
     message(STATUS "Qt Widgets not found, skip jsapi_qt / demo_app targets")
   endif()

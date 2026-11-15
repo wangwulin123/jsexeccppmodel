@@ -122,8 +122,12 @@ void JsApiBrowserBridge::ChannelState::StopSession() {
 
 void JsApiBrowserBridge::ChannelState::ReaderLoop() {
   HANDLE handles[4] = {reader.event(), wake_event, abandon_event, stop_event};
+  // 等待不设超时：唤醒源只有"请求到达 / 通道补收 / 放弃 / 停止"四类，且
+  // abandon_event、stop_event 都是手动重置事件（置位后不会丢信号），请求槽的
+  // pending 是电平标志、写方先写数据后 SetEvent，因此不存在丢唤醒的窗口。
+  // 原来用 200ms 只为兜底，代价是每页每秒 5 次空转唤醒。
   while (!abandoned.load()) {
-    const DWORD wait = ::WaitForMultipleObjects(4, handles, FALSE, 200);
+    const DWORD wait = ::WaitForMultipleObjects(4, handles, FALSE, INFINITE);
     if (wait == WAIT_OBJECT_0 + 2 || wait == WAIT_OBJECT_0 + 3) {
       return;
     }
@@ -140,8 +144,10 @@ void JsApiBrowserBridge::ChannelState::ReaderLoop() {
 
 void JsApiBrowserBridge::ChannelState::SessionLoop() {
   HANDLE handles[3] = {session_event, abandon_event, stop_event};
+  // 同上：session_event / abandon_event / stop_event 覆盖全部唤醒来源；
+  // 嵌套请求入队时也会唤醒本线程（见 OnRequestReady），不会漏收。
   while (!abandoned.load()) {
-    const DWORD wait = ::WaitForMultipleObjects(3, handles, FALSE, 200);
+    const DWORD wait = ::WaitForMultipleObjects(3, handles, FALSE, INFINITE);
     if (wait == WAIT_OBJECT_0 + 1 || wait == WAIT_OBJECT_0 + 2) {
       return;
     }
@@ -405,6 +411,9 @@ void JsApiBrowserBridge::OnRequestReady(ChannelState* state) {
                                            std::move(payload)});
       }
       ::SetEvent(state->nest_event);
+      // 同步等待循环可能刚好结束（本线程读到的是归零前的 execute_level），
+      // 此时没有内联消费者；一并唤醒会话线程按顶层补执行，避免请求滞留。
+      ::SetEvent(state->session_event);
     }
   }
 }

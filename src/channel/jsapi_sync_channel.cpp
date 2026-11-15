@@ -150,8 +150,11 @@ bool SyncChannel::Send(const std::string& payload,
 
 void SyncChannel::WatcherLoop() {
   HANDLE handles[2] = {evt_reader_->event(), stop_event_};
+  // 等待不设超时：环形缓冲的 count 是电平标志、写方写完数据后才 SetEvent，
+  // 读方每轮读到空才回到等待，不存在丢唤醒窗口；stop_event_ 为手动重置事件。
+  // 原来用 200ms 只为兜底，代价是每页每秒 5 次空转唤醒。
   while (!stopping_.load()) {
-    const DWORD wait = ::WaitForMultipleObjects(2, handles, FALSE, 200);
+    const DWORD wait = ::WaitForMultipleObjects(2, handles, FALSE, INFINITE);
     if (wait == WAIT_OBJECT_0 + 1) {
       return;
     }
